@@ -1,0 +1,735 @@
+<!DOCTYPE html>
+<html lang="it" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>mysoc</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script>
+      tailwind = window.tailwind || {};
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              night: "#070b11",
+              panel: "#101722",
+              line: "#223042",
+              cyan: "#22d3ee",
+              emerald: "#34d399",
+              crimson: "#ef4444",
+            },
+          },
+        },
+      };
+    </script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/echarts@5.6.0/dist/echarts.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css" />
+    <script defer src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/it.js"></script>
+    <script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <link rel="stylesheet" href="/static/css/app.css" />
+  </head>
+  <body class="bg-night text-slate-200" x-data="mysocApp()" x-init="init()">
+    <div class="app-shell bg-grid">
+      <div class="app-workspace mx-auto flex w-full max-w-[1800px] flex-col overflow-hidden px-4 py-4 lg:flex-row lg:gap-4">
+        <aside class="app-sidebar app-sidebar-compact mb-4 w-full rounded-3xl border border-line bg-panel/80 p-4 shadow-2xl shadow-cyan-500/10 backdrop-blur lg:mb-0 lg:w-60 lg:shrink-0">
+          <div class="mb-6">
+            <div class="app-caption text-cyan">mysoc</div>
+          </div>
+          <nav class="sidebar-nav space-y-2">
+            <template x-for="tab in tabs" :key="tab.id">
+              <button
+                class="sidebar-tab w-full rounded-2xl border px-4 py-3 text-left transition"
+                :class="activeTab === tab.id ? 'border-cyan bg-cyan/10 text-white' : 'border-line bg-black/20 text-slate-300 hover:border-cyan/40'"
+                @click="setActiveTab(tab.id)"
+              >
+                <div class="app-body app-strong" x-text="tab.name"></div>
+                <div class="app-body mt-1 text-slate-500" x-text="tab.description"></div>
+              </button>
+            </template>
+          </nav>
+          <div class="sidebar-status">
+            <div class="app-body text-slate-300 truncate" x-text="statusMessage"></div>
+            <div class="app-body text-slate-500">API: <span x-text="health.status || 'n/a'"></span></div>
+          </div>
+        </aside>
+
+        <main class="app-main min-w-0 flex-1">
+          <section x-show="activeTab === 'timeline'" x-cloak class="app-section">
+            <div class="grid h-full gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(0,0.8fr)]">
+              <div class="panel-card min-w-0 h-full">
+                <div class="panel-header">
+                  <div class="min-w-0">
+                    <h2>Timeline Analitica</h2>
+                    <p>Vista a tracce su eventi recenti con dettaglio raw.</p>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <button
+                      type="button"
+                      class="btn-secondary !px-3 !py-2"
+                      title="Resetta a ultimi 60 minuti"
+                      @click="resetTimelineDateFilters()"
+                    >↺</button>
+                    <button
+                      type="button"
+                      class="btn-secondary !px-3 !py-2"
+                      :class="timelineSelectionMode ? '!border-cyan !bg-cyan/15 !text-white' : ''"
+                      title="Disegna finestra temporale"
+                      @click="toggleTimelineSelectionMode()"
+                    >▭</button>
+                    <button
+                      type="button"
+                      class="btn-secondary !px-3 !py-2"
+                      title="Cancella finestra temporale"
+                      @click="clearTimelineSelection()"
+                    >✕</button>
+                    <button
+                      type="button"
+                      class="btn-primary !px-3 !py-2"
+                      :disabled="!timelineSelection"
+                      title="Analizza finestra con AI"
+                      @click="runTimelineSelectionAnalysis()"
+                    >AI</button>
+                  </div>
+                </div>
+                <div class="mb-3 grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+                  <label class="field">
+                    <span>Start date</span>
+                    <input
+                      x-ref="timelineStartPicker"
+                      class="input-dark"
+                      type="text"
+                      readonly
+                      placeholder="Seleziona inizio"
+                    />
+                  </label>
+                  <label class="field">
+                    <span>End date</span>
+                    <input
+                      x-ref="timelineEndPicker"
+                      class="input-dark"
+                      type="text"
+                      readonly
+                      placeholder="Seleziona fine"
+                    />
+                  </label>
+                  <div class="flex items-end">
+                    <button type="button" class="btn-secondary w-full xl:w-auto" @click="applyTimelineDateFilters()">Applica</button>
+                  </div>
+                </div>
+                <div class="mb-1 app-body text-slate-400" x-text="`Finestra AI timeline: ${timelineSelectionLabel()}`"></div>
+                <div class="mb-3 app-body text-slate-500" x-text="timelineDetailMode === 'events' ? `Drill-down reale: ${timelineEvents.length} eventi in buffer (${timelineBufferCap} max)` : `Overview aggregata ${timelineBucketLabel || 'auto'} | finestra visibile ${timelineDetailBucketLabel || 'auto'}`"></div>
+                <div id="timelineChart" class="chart-frame timeline-stage">
+                  <canvas id="timelineMainCanvas" class="timeline-canvas" aria-label="Timeline analitica"></canvas>
+                </div>
+                <div class="timeline-scrubber">
+                  <canvas id="timelineOverviewCanvas" class="timeline-canvas" aria-label="Panoramica timeline"></canvas>
+                </div>
+                <div class="timeline-toolbar-grid mt-4">
+                  <div class="timeline-toolbar-card">
+                    <div class="timeline-chip-row">
+                      <template x-for="option in timelineTrackOptions" :key="`toolbar-${option.key}`">
+                        <label class="timeline-chip">
+                          <input
+                            type="checkbox"
+                            :checked="isSelected('timelineTrackSelections', option.key)"
+                            @change="toggleSelection('timelineTrackSelections', option.key)"
+                          />
+                          <span x-text="option.label"></span>
+                        </label>
+                      </template>
+                    </div>
+                  </div>
+                  <div class="timeline-toolbar-card">
+                    <div class="timeline-chip-row timeline-chip-row-compact">
+                      <template x-for="option in timelineTrackOptions.filter((item) => timelineTrackSelections.includes(item.key))" :key="`toolbar-group-${option.key}`">
+                        <button
+                          class="timeline-state-chip"
+                          :class="isTrackGroupCollapsed(option.key) ? 'is-collapsed' : 'is-expanded'"
+                          @click="toggleTrackGroup(option.key)"
+                        >
+                          <span class="timeline-state-chip-label" x-text="option.label"></span>
+                          <span class="timeline-state-chip-state" x-text="isTrackGroupCollapsed(option.key) ? 'compatta' : 'espansa'"></span>
+                        </button>
+                      </template>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="panel-card min-w-0 h-full">
+                <div class="panel-header">
+                  <div>
+                    <h2>Controlli e Dettagli</h2>
+                    <p>Istante, evento e correlazioni.</p>
+                  </div>
+                </div>
+                <div class="panel-scroll space-y-3">
+                  <div class="rounded-2xl border border-line bg-black/20 p-4">
+                    <div class="app-body app-strong text-white">Istante selezionato</div>
+                    <div class="app-body mt-2 text-slate-400" x-text="correlationTime || 'Muovi il mouse nella timeline per fissare il cursore verticale.'"></div>
+                  </div>
+                  <div class="rounded-2xl border border-line bg-black/20 p-4">
+                    <div class="app-body app-strong text-white">Evento selezionato</div>
+                    <template x-if="selectedEvent">
+                      <div class="mt-3 space-y-2">
+                        <div class="app-body app-strong text-white" x-text="selectedEvent.summary"></div>
+                        <div class="app-body text-slate-400" x-text="selectedEvent.time"></div>
+                        <div class="app-body text-slate-300">Action: <span x-text="selectedEvent.action"></span></div>
+                        <div class="app-body text-slate-300">Flow: <span x-text="selectedEvent.traffic_flow"></span></div>
+                        <div class="app-body text-slate-300">Source: <span x-text="selectedEvent.source_ip"></span></div>
+                        <div class="app-body text-slate-300">Destination: <span x-text="selectedEvent.destination_ip"></span></div>
+                        <div class="app-body text-slate-300">Porta destinazione: <span x-text="selectedEvent.destination_port"></span></div>
+                        <pre class="app-pre !mt-3 !min-h-0" x-text="selectedEvent.raw_message"></pre>
+                      </div>
+                    </template>
+                    <template x-if="!selectedEvent">
+                      <div class="app-body mt-2 text-slate-400">Clicca un punto della timeline per vedere qui il dettaglio mantenendo il focus sul contesto generale.</div>
+                    </template>
+                  </div>
+                  <template x-if="correlatedEvents.length">
+                    <div class="space-y-2">
+                      <template x-for="event in correlatedEvents" :key="`${event.id}-${event.time}`">
+                        <button class="timeline-correlation-card" @click="selectEvent(event)">
+                          <span class="app-body app-strong text-white" x-text="event.summary"></span>
+                          <span class="app-body text-slate-400" x-text="`${event.time} | ${event.traffic_flow || 'n/a'}`"></span>
+                        </button>
+                      </template>
+                    </div>
+                  </template>
+                  <template x-if="!correlatedEvents.length">
+                    <div class="rounded-2xl border border-dashed border-line p-6 text-slate-500">Nessuna intersezione disponibile per l'istante corrente.</div>
+                  </template>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section x-show="activeTab === 'alerts'" x-cloak class="app-section grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
+            <div x-show="!graphFullscreen" x-cloak class="panel-card min-w-0 h-full">
+              <div class="panel-header">
+                <div>
+                  <h2>Classificazioni e Allarmi</h2>
+                  <p>Aggregazioni live, dettaglio IP e configurazione runtime.</p>
+                </div>
+              </div>
+              <div class="panel-scroll">
+                <div class="grid gap-4 md:grid-cols-2">
+                <template x-for="card in topCards" :key="card.title">
+                  <div class="rounded-2xl border border-line bg-black/20 p-4">
+                    <div class="app-caption text-slate-500" x-text="card.title"></div>
+                    <div class="mt-3 space-y-2 card-scroll">
+                      <template x-for="item in card.items" :key="`${card.title}-${item.value}`">
+                        <button type="button" class="flex w-full items-center justify-between gap-3 rounded-xl bg-slate-950/70 px-3 py-2 text-left" @click="openTopInsight(card, item)">
+                          <span class="truncate pr-4 text-slate-300" x-text="item.value"></span>
+                          <span class="app-body app-strong whitespace-nowrap text-white" x-text="item.count"></span>
+                        </button>
+                      </template>
+                    </div>
+                  </div>
+                </template>
+                <div class="rounded-2xl border border-line bg-black/20 p-4 md:col-span-2">
+                  <div class="app-body app-strong text-white">Dettaglio IP selezionato</div>
+                  <template x-if="selectedTopInsight">
+                    <div class="mt-3 grid gap-4 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] detail-scroll">
+                      <div class="space-y-2">
+                        <div class="app-body app-strong text-cyan" x-text="selectedTopInsight.ip"></div>
+                        <div class="app-body text-slate-300">Area geografica: <span x-text="`${selectedTopInsight.country || 'n/a'} / ${selectedTopInsight.city || 'n/a'}`"></span></div>
+                        <div class="app-body text-slate-300">Coordinate: <span x-text="`${selectedTopInsight.lat ?? 'n/a'}, ${selectedTopInsight.lon ?? 'n/a'}`"></span></div>
+                        <div class="app-body text-slate-300">Frequenza visibilita': <span x-text="selectedTopInsight.total_seen"></span></div>
+                        <div class="app-body text-slate-300">Prima vista: <span x-text="selectedTopInsight.first_seen || 'n/a'"></span></div>
+                        <div class="app-body text-slate-300">Ultima vista: <span x-text="selectedTopInsight.last_seen || 'n/a'"></span></div>
+                      </div>
+                      <div class="grid gap-3 md:grid-cols-3">
+                        <div>
+                          <div class="app-caption text-slate-500">Top destinazioni</div>
+                          <div class="mt-2 space-y-1">
+                            <template x-for="item in selectedTopInsight.top_destinations" :key="`dst-${item.value}`">
+                              <div class="app-body text-slate-300" x-text="`${item.value} (${item.count})`"></div>
+                            </template>
+                          </div>
+                        </div>
+                        <div>
+                          <div class="app-caption text-slate-500">Top porte</div>
+                          <div class="mt-2 space-y-1">
+                            <template x-for="item in selectedTopInsight.top_ports" :key="`port-${item.value}`">
+                              <div class="app-body text-slate-300" x-text="`${item.value} (${item.count})`"></div>
+                            </template>
+                          </div>
+                        </div>
+                        <div>
+                          <div class="app-caption text-slate-500">Flow / action</div>
+                          <div class="mt-2 space-y-1">
+                            <template x-for="item in selectedTopInsight.flows" :key="`flow-${item.value}`">
+                              <div class="app-body text-slate-300" x-text="`flow ${item.value} (${item.count})`"></div>
+                            </template>
+                            <template x-for="item in selectedTopInsight.actions" :key="`action-${item.value}`">
+                              <div class="app-body text-slate-300" x-text="`action ${item.value} (${item.count})`"></div>
+                            </template>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </template>
+                  <template x-if="!selectedTopInsight">
+                    <div class="app-body mt-2 text-slate-400">Clicca un IP nei riquadri top per vedere qui geografia, frequenza di visibilita' e pattern principali.</div>
+                  </template>
+                </div>
+              </div>
+              </div>
+            </div>
+            <div x-show="!graphFullscreen" x-cloak class="panel-card min-w-0 h-full">
+              <div class="panel-header">
+                <div>
+                  <h2>Soglie operative</h2>
+                  <p>Gestione guidata di classi e allarmi.</p>
+                </div>
+              </div>
+              <div class="panel-scroll space-y-4">
+                <div class="rounded-2xl border border-line bg-black/20 p-4">
+                  <div class="mb-3 flex items-center justify-between gap-3">
+                    <div class="app-body app-strong text-white">Catalogo scope</div>
+                  </div>
+                  <div class="flex gap-2">
+                    <input class="input-dark !px-3 !py-2" x-model="newScopeDraft" placeholder="Nuovo scope" />
+                    <button class="btn-primary !px-3 !py-2" @click="persistCatalogValue('subnet_scopes', newScopeDraft)">Aggiungi</button>
+                  </div>
+                  <div class="mt-3 flex flex-wrap gap-2">
+                    <template x-for="scope in catalogs.subnet_scopes" :key="`scope-catalog-${scope}`">
+                      <button type="button" class="btn-secondary !px-3 !py-2" @click="chooseCatalogValue('subnet_scopes', scope)" x-text="scope"></button>
+                    </template>
+                  </div>
+                  <pre class="app-pre mt-3" x-text="JSON.stringify(catalogs.subnet_scopes, null, 2)"></pre>
+                </div>
+                <div class="rounded-2xl border border-line bg-black/20 p-4">
+                  <div class="mb-3 flex items-center justify-between gap-3">
+                    <div class="app-body app-strong text-white">Catalogo metriche</div>
+                  </div>
+                  <div class="flex gap-2">
+                    <input class="input-dark !px-3 !py-2" x-model="newMetricDraft" placeholder="Nuova metrica" />
+                    <button class="btn-primary !px-3 !py-2" @click="persistCatalogValue('alert_metrics', newMetricDraft)">Aggiungi</button>
+                  </div>
+                  <div class="mt-3 flex flex-wrap gap-2">
+                    <template x-for="metric in catalogs.alert_metrics" :key="`metric-catalog-${metric}`">
+                      <button type="button" class="btn-secondary !px-3 !py-2" @click="chooseCatalogValue('alert_metrics', metric)" x-text="metric"></button>
+                    </template>
+                  </div>
+                  <div class="mt-3 space-y-2">
+                    <template x-for="metric in catalogs.supported_alert_metrics || []" :key="`metric-info-${metric.name}`">
+                      <div class="rounded-xl border border-line bg-slate-950/60 px-3 py-3">
+                        <div class="app-body app-strong text-white" x-text="metric.label"></div>
+                        <div class="app-body mt-1 text-cyan" x-text="metric.name"></div>
+                        <div class="app-body mt-1 text-slate-400" x-text="metric.description"></div>
+                      </div>
+                    </template>
+                  </div>
+                  <pre class="app-pre mt-3" x-text="JSON.stringify(catalogs.alert_metrics, null, 2)"></pre>
+                </div>
+                <div class="rounded-2xl border border-line bg-black/20 p-4">
+                  <div class="mb-3 flex items-center justify-between gap-3">
+                    <div class="app-body app-strong text-white">Classi / subnet configurate</div>
+                    <button class="btn-primary" @click="openSubnetModal()">Nuova classe</button>
+                  </div>
+                  <div class="card-scroll">
+                    <template x-for="subnet in subnets" :key="subnet.cidr">
+                      <div class="mb-2 rounded-xl bg-slate-950/70 px-3 py-3">
+                        <div class="flex items-center justify-between gap-3">
+                          <span class="app-body app-strong text-white" x-text="subnet.name"></span>
+                          <span class="app-caption whitespace-nowrap text-cyan" x-text="subnet.scope"></span>
+                        </div>
+                        <div class="mt-2 flex items-center justify-between gap-3">
+                          <span x-text="subnet.cidr"></span>
+                          <div class="flex gap-2">
+                            <button class="btn-secondary" @click="openSubnetModal(subnet)">Modifica</button>
+                            <button class="btn-secondary" @click="removeSubnet(subnet.id)">Elimina</button>
+                          </div>
+                        </div>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+                <div class="rounded-2xl border border-line bg-black/20 p-4">
+                  <div class="mb-3 flex items-center justify-between gap-3">
+                    <div class="app-body app-strong text-white">Allarmi configurati</div>
+                    <button class="btn-primary" @click="openAlertModal()">Nuovo allarme</button>
+                  </div>
+                  <div class="card-scroll">
+                    <template x-for="alert in alerts" :key="alert.name">
+                      <div class="mb-2 rounded-xl bg-slate-950/70 px-3 py-3">
+                        <div class="flex items-center justify-between gap-3">
+                          <span class="app-body app-strong text-white" x-text="alert.name"></span>
+                          <span class="app-body app-strong whitespace-nowrap text-crimson" x-text="alert.threshold"></span>
+                        </div>
+                        <div class="mt-2 text-slate-400" x-text="`${alert.metric} | finestra ${alert.window_seconds}s`"></div>
+                        <div class="mt-2 flex justify-end gap-2">
+                          <button class="btn-secondary" @click="openAlertModal(alert)">Modifica</button>
+                          <button class="btn-secondary" @click="removeAlert(alert.id)">Elimina</button>
+                        </div>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+                <div class="rounded-2xl border border-line bg-black/20 p-4">
+                  <div class="app-body app-strong text-white">JSON classi</div>
+                  <pre class="app-pre mt-3" x-text="JSON.stringify(subnets, null, 2)"></pre>
+                </div>
+                <div class="rounded-2xl border border-line bg-black/20 p-4">
+                  <div class="app-body app-strong text-white">JSON allarmi</div>
+                  <pre class="app-pre mt-3" x-text="JSON.stringify(alerts, null, 2)"></pre>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section x-show="activeTab === 'map'" x-cloak class="app-section grid gap-4 xl:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
+            <div x-show="!graphFullscreen" x-cloak class="panel-card min-w-0 h-full">
+              <div class="panel-header">
+                <div>
+                  <h2>Geomappa</h2>
+                </div>
+              </div>
+              <div class="mb-4 rounded-2xl border border-line bg-black/20 p-4">
+                <div class="app-body app-strong text-white">Dettaglio punto selezionato</div>
+                <template x-if="selectedMapPoint">
+                  <div class="mt-2 grid gap-2 sm:grid-cols-2">
+                    <div class="app-body text-slate-300"><span class="text-white">Source</span>: <span x-text="`${selectedMapPoint.source_ip}:${selectedMapPoint.source_port || 'na'}`"></span></div>
+                    <div class="app-body text-slate-300"><span class="text-white">Destination</span>: <span x-text="`${selectedMapPoint.destination_ip}:${selectedMapPoint.destination_port || 'na'}`"></span></div>
+                    <div class="app-body text-slate-300"><span class="text-white">Country</span>: <span x-text="selectedMapPoint.country || 'n/a'"></span></div>
+                    <div class="app-body text-slate-300"><span class="text-white">City</span>: <span x-text="selectedMapPoint.city || 'n/a'"></span></div>
+                  </div>
+                </template>
+                <template x-if="!selectedMapPoint">
+                  <div class="app-body mt-2 text-slate-400">Passa sopra un marker o cliccalo per leggere subito paese e citta'.</div>
+                </template>
+              </div>
+              <div id="worldMap" class="chart-frame rounded-2xl overflow-hidden border border-line"></div>
+              <template x-if="!mapPoints.length">
+                <div class="mt-4 rounded-2xl border border-dashed border-line bg-black/20 p-4 text-slate-400">
+                  Nessun marker geolocalizzato disponibile nella finestra corrente. Con DB-IP Lite i marker usano citta' e coordinate del database gratuito aggiornato mensilmente.
+                </div>
+              </template>
+            </div>
+            <div class="panel-card min-w-0 h-full" :class="graphFullscreen ? 'graph-panel-fullscreen' : ''">
+              <div class="panel-header">
+                <div>
+                  <h2>Grafo di rete</h2>
+                  <p>Relazioni host-socket-host. Clicca per congelare il layout ed esplorare i flussi.</p>
+                </div>
+                <button
+                  type="button"
+                  class="btn-secondary !px-3 !py-2"
+                  :title="graphFullscreen ? 'Torna a widget' : 'Apri a tutto schermo'"
+                  @click="toggleGraphFullscreen()"
+                  x-text="graphFullscreen ? 'Riduci' : 'Fullscreen'"
+                ></button>
+              </div>
+              <div class="mb-3 flex flex-wrap gap-2">
+                <template x-for="mode in graphModeOptions" :key="`graph-mode-${mode}`">
+                  <button
+                    type="button"
+                    class="btn-secondary !px-3 !py-2"
+                    :class="graphMode === mode ? '!border-cyan !bg-cyan/15 !text-white' : '!border-slate-700 !bg-slate-950/55 !text-slate-500'"
+                    @click="setGraphMode(mode)"
+                    x-text="mode"
+                  ></button>
+                </template>
+              </div>
+              <div class="mb-3 flex flex-wrap gap-2">
+                <template x-for="item in graphFilterOptions" :key="`graph-filter-${item}`">
+                  <button
+                    type="button"
+                    class="btn-secondary !px-3 !py-2"
+                    :class="graphCategoryFilters.includes(item) ? '!border-cyan !bg-cyan/15 !text-white' : '!border-slate-700 !bg-slate-950/55 !text-slate-500'"
+                    @click="toggleGraphCategory(item)"
+                    x-text="item"
+                  ></button>
+                </template>
+              </div>
+              <div id="graphChart" class="chart-frame"></div>
+              <template x-if="!graphDataCache.nodes.length">
+                <div class="mt-4 rounded-2xl border border-dashed border-line bg-black/20 p-4 text-slate-400">
+                  Nessun nodo disponibile nella finestra corrente. Quando la query del backend restituisce flussi, qui vedi la relazione sorgente-destinazione-servizio.
+                </div>
+              </template>
+            </div>
+          </section>
+
+          <section x-show="activeTab === 'logs'" x-cloak class="app-section">
+            <div class="panel-card min-w-0 h-full">
+              <div class="panel-header">
+                <div>
+                  <h2>Log ingestiti</h2>
+                  <p>Elenco tabellare completo dei log incamerati.</p>
+                </div>
+              </div>
+              <div
+                x-ref="logsScroller"
+                @scroll.passive="onLogScroll($event)"
+                class="panel-scroll overflow-x-auto rounded-2xl border border-line bg-black/20"
+              >
+                <table class="log-table w-full text-left app-body">
+                  <thead class="sticky top-0 bg-slate-950/95 text-slate-300">
+                    <tr>
+                      <th class="px-3 py-3">Time</th>
+                      <th class="px-3 py-3">Flow</th>
+                      <th class="px-3 py-3">Action</th>
+                      <th class="px-3 py-3">Source</th>
+                      <th class="px-3 py-3">Destination</th>
+                      <th class="px-3 py-3">Classe</th>
+                      <th class="px-3 py-3">Proto</th>
+                      <th class="px-3 py-3">Geo</th>
+                      <th class="px-3 py-3">Summary</th>
+                    </tr>
+                    <tr class="border-t border-line/70 bg-slate-950/95">
+                      <th class="px-2 py-2"><input class="input-dark !rounded-lg !px-2 !py-2" x-model="logFilters.time" placeholder="filtra" /></th>
+                      <th class="px-2 py-2"><input class="input-dark !rounded-lg !px-2 !py-2" x-model="logFilters.flow" placeholder="filtra" /></th>
+                      <th class="px-2 py-2"><input class="input-dark !rounded-lg !px-2 !py-2" x-model="logFilters.action" placeholder="filtra" /></th>
+                      <th class="px-2 py-2"><input class="input-dark !rounded-lg !px-2 !py-2" x-model="logFilters.source" placeholder="filtra" /></th>
+                      <th class="px-2 py-2"><input class="input-dark !rounded-lg !px-2 !py-2" x-model="logFilters.destination" placeholder="filtra" /></th>
+                      <th class="px-2 py-2"><input class="input-dark !rounded-lg !px-2 !py-2" x-model="logFilters.classes" placeholder="filtra" /></th>
+                      <th class="px-2 py-2"><input class="input-dark !rounded-lg !px-2 !py-2" x-model="logFilters.protocol" placeholder="filtra" /></th>
+                      <th class="px-2 py-2"><input class="input-dark !rounded-lg !px-2 !py-2" x-model="logFilters.geo" placeholder="filtra" /></th>
+                      <th class="px-2 py-2"><input class="input-dark !rounded-lg !px-2 !py-2" x-model="logFilters.summary" placeholder="filtra" /></th>
+                    </tr>
+                  </thead>
+                  <template x-for="row in filteredLogs()" :key="`log-${row.id}-${row.observed_at}`">
+                    <tbody>
+                        <tr class="border-t border-line/70 align-top text-slate-300 cursor-pointer hover:bg-slate-900/25" @click="toggleLogExpanded(row.id)">
+                          <td class="px-3 py-3 whitespace-nowrap" x-text="row.observed_at || 'n/a'"></td>
+                          <td class="px-3 py-3 whitespace-nowrap" x-text="row.traffic_flow || 'n/a'"></td>
+                          <td class="px-3 py-3 whitespace-nowrap" x-text="row.action || 'n/a'"></td>
+                          <td class="px-3 py-3 whitespace-nowrap" x-text="`${row.source_ip || 'n/a'}:${row.source_port ?? 'na'}`"></td>
+                          <td class="px-3 py-3 whitespace-nowrap" x-text="`${row.destination_ip || 'n/a'}:${row.destination_port ?? 'na'}`"></td>
+                          <td class="px-3 py-3 whitespace-nowrap" x-text="(row.classes || []).join(', ') || 'n/a'"></td>
+                          <td class="px-3 py-3 whitespace-nowrap" x-text="row.protocol || 'n/a'"></td>
+                          <td class="px-3 py-3 whitespace-nowrap" x-text="`${row.source_country || 'n/a'} / ${row.source_city || 'n/a'}`"></td>
+                          <td class="px-3 py-3 min-w-[320px]" x-text="row.summary || row.raw_message || 'n/a'"></td>
+                        </tr>
+                        <tr x-show="isLogExpanded(row.id)" class="border-t border-line/50 bg-slate-950/40">
+                          <td colspan="9" class="px-3 pb-4 pt-2">
+                            <pre class="app-pre !m-0 !p-3 !text-[0.8rem]" x-text="JSON.stringify(row, null, 2)"></pre>
+                          </td>
+                        </tr>
+                    </tbody>
+                  </template>
+                </table>
+              </div>
+              <div class="mt-3 flex items-center justify-between gap-3 text-[0.82rem] text-slate-400">
+                <div x-text="`Pagina log: ${logCurrentPage()} / ${logTotalPages()} | righe ${logs.items.length} / ${logs.total}`"></div>
+                <div class="flex items-center gap-2 text-right">
+                  <span x-show="logLoading">Caricamento in corso...</span>
+                  <div x-show="!logLoading" class="log-pager-toolbar">
+                    <button type="button" class="log-pager-btn" title="Prima pagina" @click="goToFirstLogPage()">⌂</button>
+                    <button type="button" class="log-pager-btn" title="Indietro di 5 pagine" :disabled="(logs.offset || 0) === 0" @click="jumpBackwardLogs()">≪</button>
+                    <button type="button" class="log-pager-btn" title="Indietro di una pagina" :disabled="(logs.offset || 0) === 0" @click="previousLogPage()">‹</button>
+                    <div class="log-pager-index">
+                      <span>Pag.</span>
+                      <input class="input-dark log-pager-input" type="number" min="1" :max="logTotalPages()" x-model.number="logsPageInput" @change="goToLogPageInput()" />
+                    </div>
+                    <button type="button" class="log-pager-btn" title="Avanti di una pagina" :disabled="!logs.has_more" @click="nextLogPage()">›</button>
+                    <button type="button" class="log-pager-btn" title="Avanti di 5 pagine" :disabled="!logs.has_more" @click="jumpForwardLogs()">≫</button>
+                    <button type="button" class="log-pager-btn" title="Ultima pagina" :disabled="!logs.total" @click="goToLastLogPage()">⌘</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section x-show="activeTab === 'ai'" x-cloak class="app-section grid gap-4 xl:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
+            <div class="panel-card min-w-0 panel-scroll space-y-4 ai-panel">
+              <div class="panel-header">
+                <div>
+                  <h2>Analisi Forense AI</h2>
+                  <p>Prompt operativo verso Ollama locale.</p>
+                </div>
+                <div class="flex gap-2">
+                  <button class="btn-secondary" @click="savePrompt()">Salva prompt</button>
+                  <button class="btn-primary" @click="runAnalysis()">Avvia analisi</button>
+                </div>
+              </div>
+              <label class="field">
+                <span>Modello</span>
+                <select class="select-dark" x-model="analysis.model">
+                  <template x-for="model in ollamaModels" :key="`ollama-model-${model}`">
+                    <option :value="model" x-text="model"></option>
+                  </template>
+                </select>
+              </label>
+              <div class="rounded-2xl border border-line bg-black/20 p-4 text-slate-300 app-body">
+                Intervallo AI attivo:
+                <span class="text-white" x-text="analysisTimeScopeLabel()"></span>
+              </div>
+              <label class="field">
+                <span>Prompt</span>
+                <textarea class="input-dark min-h-40" x-model="analysis.prompt"></textarea>
+              </label>
+              <div class="rounded-2xl border border-line bg-black/20 p-4">
+                <div class="app-body app-strong text-white">Prompt salvati</div>
+                <div class="mt-3 overflow-auto">
+                  <table class="min-w-full text-left app-body">
+                    <thead class="text-slate-500">
+                      <tr>
+                        <th class="px-2 py-2">Nome</th>
+                        <th class="px-2 py-2">Prompt</th>
+                        <th class="px-2 py-2">Azioni</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <template x-for="prompt in savedPrompts" :key="`saved-prompt-${prompt.id}`">
+                        <tr class="border-t border-line/70">
+                          <td class="px-2 py-2 whitespace-nowrap">
+                            <button type="button" class="text-cyan underline" @click="applySavedPrompt(prompt.id)" x-text="prompt.name"></button>
+                          </td>
+                          <td class="px-2 py-2 text-slate-300">
+                            <div class="max-w-[28rem] truncate" x-text="prompt.text"></div>
+                          </td>
+                          <td class="px-2 py-2 whitespace-nowrap">
+                            <div class="flex gap-2">
+                              <button type="button" class="btn-secondary !px-3 !py-2" @click="editSavedPrompt(prompt.id)">Modifica</button>
+                              <button type="button" class="btn-secondary !px-3 !py-2" @click="deleteSavedPrompt(prompt.id)">Elimina</button>
+                            </div>
+                          </td>
+                        </tr>
+                      </template>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+            <div class="panel-card min-w-0 panel-scroll ai-panel">
+              <div class="panel-header">
+                <div>
+                  <h2>Output LLM</h2>
+                  <p>Stream incrementale della risposta.</p>
+                </div>
+              </div>
+              <pre class="app-pre ai-output" x-text="analysis.output"></pre>
+            </div>
+          </section>
+        </main>
+      </div>
+
+      <footer class="border-t border-line bg-black/30 px-6 py-3 text-slate-400">
+        <div class="mx-auto flex max-w-[1800px] items-center justify-between">
+          <span>mysoc @2026</span>
+          <span><a href="https://db-ip.com" class="text-cyan underline">IP Geolocation by DB-IP</a></span>
+          <span x-text="statusFooter"></span>
+        </div>
+      </footer>
+    </div>
+
+    <div class="modal-backdrop" x-show="subnetModalOpen" x-cloak @click.self="subnetModalOpen = false">
+      <div class="modal-card">
+        <div class="panel-header">
+          <div>
+            <h2>Classe / subnet</h2>
+            <p>Definizione guidata della classe di traffico.</p>
+          </div>
+        </div>
+        <div class="space-y-4">
+          <label class="field">
+            <span>Nome classe</span>
+            <input class="input-dark" x-model="subnetForm.name" />
+          </label>
+          <label class="field">
+            <span>CIDR</span>
+            <input class="input-dark" x-model="subnetForm.cidr" placeholder="192.168.0.0/16" />
+          </label>
+          <label class="field">
+            <span>Scope</span>
+            <select class="select-dark" x-model="subnetForm.scope">
+              <template x-for="scope in catalogs.subnet_scopes" :key="`scope-select-${scope}`">
+                <option :value="scope" x-text="scope"></option>
+              </template>
+            </select>
+          </label>
+          <div class="flex gap-2">
+            <input class="input-dark !px-3 !py-2" x-model="newScopeDraft" placeholder="Nuovo scope" />
+            <button type="button" class="btn-secondary !px-3 !py-2" @click="persistCatalogValue('subnet_scopes', newScopeDraft, true)">Salva scope</button>
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <template x-for="scope in catalogs.subnet_scopes" :key="`scope-chip-${scope}`">
+              <button type="button" class="btn-secondary !px-3 !py-2" @click="subnetForm.scope = scope" x-text="scope"></button>
+            </template>
+          </div>
+          <label class="picker-option">
+            <input type="checkbox" x-model="subnetForm.enabled" />
+            <span>Classe attiva</span>
+          </label>
+          <div class="flex justify-end gap-2">
+            <button class="btn-secondary" @click="subnetModalOpen = false">Annulla</button>
+            <button class="btn-primary" @click="persistSubnetForm()">Salva classe</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-backdrop" x-show="alertModalOpen" x-cloak @click.self="alertModalOpen = false">
+      <div class="modal-card">
+        <div class="panel-header">
+          <div>
+            <h2>Allarme guidato</h2>
+            <p>Definizione soglia con campi strutturati.</p>
+          </div>
+        </div>
+        <div class="space-y-4">
+          <label class="field">
+            <span>Nome allarme</span>
+            <input class="input-dark" x-model="alertForm.name" />
+          </label>
+          <label class="field">
+            <span>Metrica</span>
+            <select class="select-dark" x-model="alertForm.metric">
+              <template x-for="metric in catalogs.alert_metrics" :key="`metric-select-${metric}`">
+                <option :value="metric" x-text="metric"></option>
+              </template>
+            </select>
+          </label>
+          <div class="flex gap-2">
+            <input class="input-dark !px-3 !py-2" x-model="newMetricDraft" placeholder="Nuova metrica" />
+            <button type="button" class="btn-secondary !px-3 !py-2" @click="persistCatalogValue('alert_metrics', newMetricDraft, true)">Salva metrica</button>
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <template x-for="metric in catalogs.alert_metrics" :key="`metric-chip-${metric}`">
+              <button type="button" class="btn-secondary !px-3 !py-2" @click="alertForm.metric = metric" x-text="metric"></button>
+            </template>
+          </div>
+          <label class="field">
+            <span>Soglia</span>
+            <input class="input-dark" type="number" min="1" x-model.number="alertForm.threshold" />
+          </label>
+          <label class="field">
+            <span>Finestra temporale (secondi)</span>
+            <input class="input-dark" type="number" min="1" x-model.number="alertForm.window_seconds" />
+          </label>
+          <label class="picker-option">
+            <input type="checkbox" x-model="alertForm.enabled" />
+            <span>Allarme attivo</span>
+          </label>
+          <div class="flex justify-end gap-2">
+            <button class="btn-secondary" @click="alertModalOpen = false">Annulla</button>
+            <button class="btn-primary" @click="persistAlertForm()">Salva allarme</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-backdrop" x-show="timelineAiModalOpen" x-cloak @click.self="timelineAiModalOpen = false">
+      <div class="modal-card">
+        <div class="panel-header">
+          <div>
+            <h2>Analisi AI da Timeline</h2>
+            <p x-text="`Intervallo: ${timelineSelectionLabel()}`"></p>
+          </div>
+          <button type="button" class="btn-secondary" @click="timelineAiModalOpen = false">Chiudi</button>
+        </div>
+        <div class="app-body text-slate-400" x-show="timelineAiBusy">Streaming risposta in corso...</div>
+        <pre class="app-pre mt-3" x-text="timelineAiOutput || 'Nessun output disponibile.'"></pre>
+      </div>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+  </body>
+</html>

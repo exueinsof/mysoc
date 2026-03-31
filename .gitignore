@@ -1,0 +1,70 @@
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Data directories (large files)
+data/
+*_data/
+pgdata/
+geoserver_data/
+postgis_data/
+models/
+letture/
+ecg_recordings/
+*.db
+*.sqlite3
+
+# Node
+node_modules/
+dist/
+build/
+.next/
+__pycache__/
+
+# Dependencies
+venv/
+env/
+*.egg-info/
+.Python
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+docker-compose.override.yml
+.dockerignore
+
+# Build artifacts
+*.tar.gz
+*.zip
+*.jar
+*.war
+
+# Logs
+logs/
+*.log
+
+# Temporary
+tmp/
+temp/
+.temp/
+*.tmp
+
+# AI/ML models (large)
+models/**/*.bin
+models/**/*.pt
+models/**/*.pth
+*.ckpt
+
+# Database backups
+*.sql
+*.sql.gz

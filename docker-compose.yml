@@ -1,0 +1,66 @@
+services:
+  proxy:
+    image: nginx:1.27-alpine
+    container_name: mysoc-proxy
+    depends_on:
+      - app
+    ports:
+      - target: 9999
+        published: "${WEB_PUBLISH_PORT:-9999}"
+        protocol: tcp
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - edge
+      - backend
+
+  app:
+    build:
+      context: .
+    container_name: mysoc-app
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./data/dbip:/app/data/dbip
+    expose:
+      - "8000"
+    ports:
+      - target: 514
+        published: "${SYSLOG_PUBLISH_PORT:-514}"
+        protocol: udp
+    networks:
+      - edge
+      - backend
+
+  postgres:
+    image: timescale/timescaledb-ha:pg16
+    container_name: mysoc-postgres
+    environment:
+      POSTGRES_DB: mysoc
+      POSTGRES_USER: mysoc
+      POSTGRES_PASSWORD: mysoc
+    volumes:
+      - postgres_data:/home/postgres/pgdata/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    expose:
+      - "5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mysoc -d mysoc"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - backend
+
+networks:
+  edge:
+    driver: bridge
+  backend:
+    driver: bridge
+    internal: true
+
+volumes:
+  postgres_data:

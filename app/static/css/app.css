@@ -1,0 +1,805 @@
+/* Keep the browser viewport as the single layout envelope. */
+[html, body] { height: 100%; }
+
+html,
+body {
+  margin: 0;
+}
+
+[x-cloak] { display: none !important; }
+
+.app-shell,
+.app-shell *:not(.leaflet-control-attribution):not(.leaflet-control-zoom-in):not(.leaflet-control-zoom-out) {
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.app-shell {
+  min-height: 100dvh;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  font-size: 0.88rem;
+  line-height: 1.45;
+  overflow: hidden;
+}
+
+/* The workspace excludes the footer and constrains all tab content. */
+.app-workspace {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: calc(100dvh - 4.5rem);
+  overflow: hidden;
+}
+
+.app-sidebar {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: 100%;
+  overflow: auto;
+}
+
+.app-sidebar-compact {
+  gap: 0.75rem;
+}
+
+.sidebar-nav {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.sidebar-tab {
+  padding-top: 0.9rem;
+  padding-bottom: 0.9rem;
+}
+
+.sidebar-status {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid rgba(34, 48, 66, 0.9);
+}
+
+.app-main {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.app-section {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.app-section > * {
+  min-height: 0;
+}
+
+.bg-grid {
+  background:
+    radial-gradient(circle at top left, rgba(34, 211, 238, 0.12), transparent 32%),
+    radial-gradient(circle at 85% 10%, rgba(52, 211, 153, 0.12), transparent 28%),
+    linear-gradient(180deg, #070b11 0%, #0b1118 45%, #070b11 100%);
+}
+
+.glass-card,
+.panel-card {
+  border: 1px solid rgba(34, 48, 66, 0.9);
+  border-radius: 1.5rem;
+  background: linear-gradient(180deg, rgba(16, 23, 34, 0.95), rgba(9, 13, 20, 0.9));
+  box-shadow: 0 20px 60px rgba(7, 11, 17, 0.55);
+}
+
+.glass-card {
+  padding: 1.25rem;
+  min-width: 0;
+}
+
+.panel-card {
+  display: flex;
+  flex-direction: column;
+  padding: 1.5rem;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.label {
+  font-size: 0.88rem;
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+.metric {
+  margin-top: 0.8rem;
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: #f8fafc;
+  line-height: 1.2;
+  word-break: break-word;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.panel-header h2 {
+  font-size: 1.2rem;
+  font-weight: 600;
+  color: #fff;
+}
+
+.panel-header p {
+  margin-top: 0.35rem;
+  font-size: 0.88rem;
+  color: #94a3b8;
+}
+
+.input-dark,
+.select-dark {
+  width: 100%;
+  border: 1px solid rgba(34, 48, 66, 1);
+  border-radius: 1rem;
+  background: rgba(2, 6, 23, 0.65);
+  color: #e2e8f0;
+  padding: 0.85rem 1rem;
+  font-size: 0.88rem;
+}
+
+.flatpickr-alt-input.input-dark,
+.flatpickr-alt-input.input-dark[readonly] {
+  background: rgba(2, 6, 23, 0.88) !important;
+  color: #f8fafc !important;
+  -webkit-text-fill-color: #f8fafc !important;
+  opacity: 1;
+  border: 1px solid rgba(34, 48, 66, 1) !important;
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.12);
+}
+
+.flatpickr-alt-input.input-dark::placeholder {
+  color: #94a3b8;
+}
+
+.flatpickr-input[readonly],
+.flatpickr-input.input-dark[readonly] {
+  background: rgba(2, 6, 23, 0.88) !important;
+  color: #f8fafc !important;
+  -webkit-text-fill-color: #f8fafc !important;
+}
+
+.flatpickr-calendar {
+  background: #0b1220;
+  border: 1px solid rgba(34, 48, 66, 1);
+  box-shadow: 0 22px 48px rgba(2, 6, 23, 0.55);
+}
+
+.flatpickr-months .flatpickr-month,
+.flatpickr-current-month .flatpickr-monthDropdown-months,
+.flatpickr-weekday,
+.flatpickr-day,
+.flatpickr-time input,
+.flatpickr-time .flatpickr-time-separator,
+.flatpickr-am-pm,
+.flatpickr-current-month input.cur-year {
+  color: #e2e8f0;
+}
+
+.flatpickr-day:hover,
+.flatpickr-day:focus {
+  background: rgba(34, 211, 238, 0.14);
+  border-color: rgba(34, 211, 238, 0.22);
+}
+
+.flatpickr-day.selected,
+.flatpickr-day.startRange,
+.flatpickr-day.endRange,
+.flatpickr-day.selected:hover,
+.flatpickr-day.startRange:hover,
+.flatpickr-day.endRange:hover {
+  background: #22d3ee;
+  border-color: #22d3ee;
+  color: #020617;
+}
+
+.flatpickr-time .numInputWrapper span.arrowUp::after {
+  border-bottom-color: #94a3b8;
+}
+
+.flatpickr-time .numInputWrapper span.arrowDown::after {
+  border-top-color: #94a3b8;
+}
+
+.field {
+  display: block;
+}
+
+.field span {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-size: 0.88rem;
+  color: #cbd5e1;
+}
+
+.btn-primary {
+  border: 1px solid rgba(34, 211, 238, 0.65);
+  border-radius: 1rem;
+  background: linear-gradient(135deg, rgba(34, 211, 238, 0.18), rgba(52, 211, 153, 0.18));
+  color: white;
+  padding: 0.9rem 1.1rem;
+  font-weight: 600;
+  font-size: 0.88rem;
+}
+
+.btn-secondary {
+  border: 1px solid rgba(34, 48, 66, 1);
+  border-radius: 1rem;
+  background: rgba(2, 6, 23, 0.65);
+  color: #e2e8f0;
+  padding: 0.75rem 1rem;
+  font-size: 0.88rem;
+}
+
+.log-pager-toolbar {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.4rem;
+  border: 1px solid rgba(34, 48, 66, 1);
+  border-radius: 0.95rem;
+  background: rgba(2, 6, 23, 0.55);
+}
+
+.log-pager-btn {
+  min-width: 2rem;
+  height: 2rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(34, 48, 66, 1);
+  border-radius: 0.7rem;
+  background: rgba(15, 23, 42, 0.82);
+  color: #e2e8f0;
+  font-size: 0.82rem;
+  line-height: 1;
+}
+
+.log-pager-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.log-pager-index {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0 0.15rem;
+  padding: 0 0.2rem;
+  color: #94a3b8;
+}
+
+.log-pager-input {
+  width: 3.75rem;
+  min-width: 3.75rem;
+  border-radius: 0.7rem;
+  padding: 0.45rem 0.55rem;
+  text-align: center;
+  font-size: 0.8rem;
+}
+
+.leaflet-container {
+  background: #dbe5f0;
+}
+
+.leaflet-tile {
+  filter: brightness(1.02) contrast(1.14) saturate(1.02);
+}
+
+.leaflet-popup-content-wrapper,
+.leaflet-popup-tip {
+  background: rgba(255, 255, 255, 0.98);
+  color: #0f172a;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  box-shadow: 0 18px 44px rgba(15, 23, 42, 0.18);
+}
+
+.leaflet-popup-content {
+  margin: 0.8rem 0.9rem;
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+  font-size: 0.92rem;
+  line-height: 1.45;
+}
+
+#graphChart,
+#timelineChart,
+#worldMap {
+  background:
+    radial-gradient(circle at top, rgba(255, 255, 255, 0.85), rgba(241, 245, 249, 0.95)),
+    linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(226, 232, 240, 0.98));
+}
+
+.app-title {
+  font-size: 1.2rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.app-caption {
+  font-size: 0.88rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+.app-body {
+  font-size: 0.88rem;
+}
+
+.app-strong {
+  font-weight: 600;
+}
+
+.panel-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  overflow: auto;
+  padding-right: 0.2rem;
+}
+
+.card-scroll {
+  max-height: min(28dvh, 24rem);
+  overflow: auto;
+  padding-right: 0.15rem;
+}
+
+.detail-scroll {
+  max-height: min(34dvh, 30rem);
+  overflow: auto;
+  padding-right: 0.15rem;
+}
+
+.log-table {
+  table-layout: auto;
+}
+
+.log-table th,
+.log-table td {
+  vertical-align: top;
+}
+
+.chart-frame {
+  height: clamp(200px, 38dvh, 520px);
+  min-height: 200px;
+  width: 100%;
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.08);
+}
+
+.timeline-stage {
+  position: relative;
+  overflow: hidden;
+  border-radius: 1rem;
+  background:
+    radial-gradient(circle at top, rgba(10, 17, 28, 0.96), rgba(4, 9, 16, 0.98)),
+    linear-gradient(180deg, rgba(8, 16, 24, 0.98), rgba(4, 8, 14, 0.98));
+}
+
+#timelineChart.chart-frame {
+  background:
+    radial-gradient(circle at top, rgba(10, 17, 28, 0.96), rgba(4, 9, 16, 0.98)),
+    linear-gradient(180deg, rgba(8, 16, 24, 0.98), rgba(4, 8, 14, 0.98));
+}
+
+.timeline-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.timeline-scrubber {
+  margin-top: 0.75rem;
+  height: 64px;
+  border: 1px solid rgba(34, 48, 66, 1);
+  border-radius: 1rem;
+  background: rgba(2, 6, 23, 0.72);
+  overflow: hidden;
+}
+
+#timelineChart.chart-frame {
+  height: clamp(260px, 48dvh, 680px);
+  min-height: 260px;
+}
+
+#worldMap.chart-frame,
+#graphChart.chart-frame {
+  height: clamp(300px, 52dvh, 760px);
+  min-height: 300px;
+  flex: 1 1 auto;
+}
+
+#graphChart.chart-frame {
+  height: clamp(340px, 58dvh, 860px);
+  min-height: 340px;
+}
+
+.ai-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.ai-panel.panel-scroll {
+  min-height: 0;
+  overflow: auto;
+}
+
+.ai-output {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.app-pre {
+  overflow: auto;
+  border: 1px solid rgba(34, 48, 66, 0.9);
+  border-radius: 1rem;
+  background: rgba(0, 0, 0, 0.4);
+  padding: 1rem;
+  color: #cbd5e1;
+  font-size: 0.88rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.picker-card {
+  border: 1px solid rgba(34, 48, 66, 0.9);
+  border-radius: 1rem;
+  background: rgba(0, 0, 0, 0.2);
+  padding: 1rem;
+}
+
+.picker-summary {
+  cursor: pointer;
+  font-size: 1.2rem;
+  font-weight: 600;
+  color: #fff;
+  list-style: none;
+}
+
+.picker-summary::-webkit-details-marker {
+  display: none;
+}
+
+.picker-grid {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.picker-option {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  color: #cbd5e1;
+}
+
+.picker-option input {
+  accent-color: #22d3ee;
+}
+
+.timeline-toolbar-grid {
+  display: grid;
+  gap: 0.8rem;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+}
+
+.timeline-toolbar-card {
+  border: 1px solid rgba(34, 48, 66, 0.9);
+  border-radius: 1.15rem;
+  background: rgba(0, 0, 0, 0.18);
+  padding: 0.75rem;
+}
+
+.timeline-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.timeline-chip-row-compact {
+  gap: 0.5rem;
+}
+
+.timeline-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 2.25rem;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid rgba(34, 48, 66, 1);
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.62);
+  color: #cbd5e1;
+}
+
+.timeline-chip input {
+  accent-color: #22d3ee;
+}
+
+.timeline-state-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 2.25rem;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid rgba(34, 48, 66, 1);
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.62);
+  color: #e2e8f0;
+  font-size: 0.86rem;
+}
+
+.timeline-state-chip.is-expanded {
+  border-color: rgba(34, 211, 238, 0.55);
+  background: rgba(34, 211, 238, 0.12);
+  color: #f8fafc;
+}
+
+.timeline-state-chip.is-collapsed {
+  color: #94a3b8;
+}
+
+.timeline-state-chip-label {
+  font-weight: 500;
+}
+
+.timeline-state-chip-state {
+  padding: 0.12rem 0.42rem;
+  border-radius: 999px;
+  background: rgba(2, 6, 23, 0.45);
+  font-size: 0.78rem;
+  color: inherit;
+}
+
+.timeline-correlation-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  width: 100%;
+  border: 1px solid rgba(34, 48, 66, 0.9);
+  border-radius: 1rem;
+  background: rgba(0, 0, 0, 0.25);
+  padding: 1rem;
+  text-align: left;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.timeline-correlation-card:hover {
+  border-color: rgba(56, 189, 248, 0.45);
+  background: rgba(2, 6, 23, 0.5);
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  background: rgba(3, 7, 18, 0.72);
+  backdrop-filter: blur(10px);
+}
+
+.modal-card {
+  width: min(900px, 100%);
+  max-height: 88vh;
+  overflow: auto;
+  border: 1px solid rgba(34, 48, 66, 0.9);
+  border-radius: 1.5rem;
+  background: linear-gradient(180deg, rgba(16, 23, 34, 0.98), rgba(9, 13, 20, 0.98));
+  box-shadow: 0 24px 64px rgba(7, 11, 17, 0.65);
+  padding: 1.5rem;
+}
+
+.map-label {
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(15, 23, 42, 0.16);
+  border-radius: 0.75rem;
+  color: #0f172a;
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+  font-size: 0.88rem;
+  padding: 0.25rem 0.5rem;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
+}
+
+.graph-panel-fullscreen {
+  position: fixed;
+  inset: 1rem;
+  z-index: 45;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  width: auto;
+  max-width: none;
+  background: rgba(16, 23, 34, 0.985);
+  box-shadow: 0 24px 80px rgba(2, 6, 23, 0.7);
+}
+
+.graph-panel-fullscreen #graphChart.chart-frame {
+  height: calc(100dvh - 18rem);
+  min-height: 420px;
+}
+
+/* Reduce panel footprint as vertical space shrinks. */
+@media (max-height: 900px) {
+  .app-workspace {
+    max-height: calc(100dvh - 4rem);
+  }
+
+  .panel-card {
+    padding: 1.15rem;
+  }
+
+  .panel-header {
+    gap: 0.75rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .chart-frame {
+    height: clamp(180px, 32dvh, 360px);
+    min-height: 180px;
+  }
+
+  #timelineChart.chart-frame {
+    height: clamp(220px, 42dvh, 520px);
+    min-height: 220px;
+  }
+
+  #worldMap.chart-frame,
+  #graphChart.chart-frame {
+    height: clamp(240px, 44dvh, 560px);
+    min-height: 240px;
+  }
+
+  #graphChart.chart-frame {
+    height: clamp(280px, 50dvh, 640px);
+    min-height: 280px;
+  }
+}
+
+@media (max-height: 760px) {
+  .app-workspace {
+    max-height: calc(100dvh - 3.75rem);
+  }
+
+  .panel-card {
+    padding: 1rem;
+    border-radius: 1.15rem;
+  }
+
+  .panel-header h2 {
+    font-size: 1.05rem;
+  }
+
+  .panel-header p,
+  .app-body,
+  .field span,
+  .input-dark,
+  .select-dark,
+  .btn-primary,
+  .btn-secondary {
+    font-size: 0.82rem;
+  }
+
+  .chart-frame {
+    height: clamp(160px, 26dvh, 280px);
+    min-height: 160px;
+  }
+
+  #timelineChart.chart-frame {
+    height: clamp(200px, 38dvh, 420px);
+    min-height: 200px;
+  }
+
+  #worldMap.chart-frame,
+  #graphChart.chart-frame {
+    height: clamp(220px, 40dvh, 430px);
+    min-height: 220px;
+  }
+
+  #graphChart.chart-frame {
+    height: clamp(250px, 46dvh, 500px);
+    min-height: 250px;
+  }
+}
+
+@media (max-width: 1400px) {
+  .timeline-toolbar-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* On medium-width stacked layouts, cards scroll internally instead of clipping. */
+@media (max-width: 1279px) and (min-width: 1025px) {
+  .app-section.grid {
+    grid-auto-rows: minmax(0, 1fr);
+  }
+
+  .app-section.grid > .panel-card {
+    overflow: auto;
+  }
+}
+
+@media (max-width: 1024px) {
+  .app-shell {
+    height: auto;
+    min-height: 100dvh;
+    overflow: visible;
+  }
+
+  .app-workspace {
+    max-height: none;
+    overflow: auto;
+  }
+
+  .app-sidebar {
+    max-height: none;
+    overflow: visible;
+  }
+
+  .app-main,
+  .app-section {
+    display: block;
+    min-height: auto;
+    height: auto;
+    overflow: visible;
+  }
+
+  .panel-scroll {
+    max-height: none;
+    overflow: visible;
+    min-height: auto;
+  }
+
+  .chart-frame {
+    height: min(44vh, 360px);
+    min-height: 220px;
+  }
+
+  #timelineChart.chart-frame {
+    height: min(52vh, 440px);
+    min-height: 240px;
+  }
+
+  #worldMap.chart-frame,
+  #graphChart.chart-frame {
+    height: min(56vh, 560px);
+    min-height: 250px;
+  }
+
+  #graphChart.chart-frame {
+    height: min(60vh, 620px);
+    min-height: 280px;
+  }
+
+  .ai-panel,
+  .ai-output {
+    min-height: auto;
+  }
+}
+
+footer {
+  flex: 0 0 auto;
+  padding-top: 1rem;
+  padding-bottom: 1rem;
+}
