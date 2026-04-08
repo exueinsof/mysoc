@@ -1,31 +1,28 @@
 import asyncio
 from collections.abc import Iterable
 
+
 from sqlalchemy import select
 
 from app.core.config import get_settings
 from app.db.session import SessionLocal
-from app.models import ConfigSubnet, FirewallLog
-from app.services.classifier import classify_flow
-from app.services.parser import parse_syslog_message
-
-
-class SyslogProtocol(asyncio.DatagramProtocol):
-    def __init__(self, queue: asyncio.Queue[str]) -> None:
-        self.queue = queue
-
-    def datagram_received(self, data: bytes, addr) -> None:
-        try:
-            message = data.decode("utf-8", errors="replace")
-        except Exception:
-            return
-        self.queue.put_nowait(message)
+from app.models import ConfigSubnet
+from app.pipeline.inputs.syslog import SyslogProtocol
+from app.pipeline.outputs.database import write_rows
+from app.pipeline.outputs.enrichment import EnrichmentWorker, submit_external_ips
+from app.pipeline.outputs.realtime import RealtimePublisher, publish_batch
+from app.pipeline.processors.syslog import process_batch
 
 
 class IngestionService:
-    def __init__(self, enrichment_worker) -> None:
+    def __init__(
+        self,
+        enrichment_worker: EnrichmentWorker,
+        realtime_hub: RealtimePublisher | None = None,
+    ) -> None:
         self.settings = get_settings()
         self.enrichment_worker = enrichment_worker
+        self.realtime_hub = realtime_hub
         self.queue: asyncio.Queue[str] = asyncio.Queue()
         self.transport = None
         self.protocol = None
@@ -74,28 +71,7 @@ class IngestionService:
 
     async def _store_batch(self, messages: Iterable[str]) -> None:
         subnets = await self._load_enabled_subnets()
-        rows = []
-        external_source_ips = set()
-        for raw_message in messages:
-            parsed = parse_syslog_message(raw_message, self.settings.timezone)
-            if parsed.get("source_ip") or parsed.get("destination_ip"):
-                parsed.update(classify_flow(parsed.get("source_ip"), parsed.get("destination_ip"), subnets))
-            else:
-                parsed.update(
-                    {
-                        "source_is_internal": False,
-                        "destination_is_internal": False,
-                        "network_direction": None,
-                        "traffic_flow": None,
-                    }
-                )
-            if parsed.get("source_ip") and not parsed["source_is_internal"]:
-                external_source_ips.add(parsed["source_ip"])
-            rows.append(FirewallLog(**parsed))
-
-        async with SessionLocal() as session:
-            session.add_all(rows)
-            await session.commit()
-
-        for ip_value in external_source_ips:
-            await self.enrichment_worker.submit(ip_value)
+        rows, external_source_ips = process_batch(messages, subnets, self.settings.timezone)
+        await write_rows(rows, SessionLocal)
+        await submit_external_ips(external_source_ips, self.enrichment_worker)
+        await publish_batch(rows, external_source_ips, self.realtime_hub)

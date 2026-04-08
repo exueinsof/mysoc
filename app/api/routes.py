@@ -1,9 +1,12 @@
-from datetime import datetime, timedelta
+import asyncio
+import json
+import logging
+from datetime import UTC, datetime, timedelta
 from ipaddress import ip_address, ip_network
-
 from pathlib import Path
+from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import String, and_, cast, desc, exists, func, or_, select, text
@@ -13,9 +16,15 @@ from app.core.config import get_settings
 from app.db.session import get_session
 from app.models import AlertThreshold, ConfigSubnet, FirewallLog, MetricCatalog, ScopeCatalog
 from app.services.ollama import list_ollama_models, stream_ollama
+from app.services.realtime import ALLOWED_REALTIME_TOPICS
 
 router = APIRouter(prefix="/api")
 settings = get_settings()
+logger = logging.getLogger(__name__)
+MAX_WEBSOCKET_TOPICS = 6
+MAX_WEBSOCKET_MESSAGE_BYTES = 4096
+DEFAULT_TIMELINE_BUFFER_CAP = 50000
+MAX_DASHBOARD_LOOKBACK_MINUTES = 43200
 
 SUPPORTED_ALERT_METRICS = [
     {
@@ -99,6 +108,107 @@ class TimelineDetailPayload(BaseModel):
 @router.get("/health")
 async def health() -> dict:
     return {"status": "ok", "service": settings.app_name}
+
+
+def _realtime_origin_allowed(origin: str | None) -> bool:
+    if not origin:
+        return True
+    try:
+        origin_host = urlparse(origin).hostname
+    except ValueError:
+        return False
+    if not origin_host or origin_host in {"127.0.0.1", "::1", "localhost"}:
+        return True
+    try:
+        return ip_address(origin_host).is_private
+    except ValueError:
+        return False
+
+
+def _realtime_client_allowed(websocket: WebSocket) -> bool:
+    if not _realtime_origin_allowed(websocket.headers.get("origin")):
+        return False
+    client_host = websocket.client.host if websocket.client else None
+    if not client_host or client_host in {"127.0.0.1", "::1", "localhost", "testclient"}:
+        return True
+    try:
+        return ip_address(client_host).is_private
+    except ValueError:
+        return False
+
+
+@router.websocket("/ws/live")
+async def realtime_live(websocket: WebSocket) -> None:
+    realtime_hub = getattr(websocket.app.state, "realtime", None)
+    if realtime_hub is None:
+        logger.error("Realtime websocket requested before hub initialization")
+        await websocket.close(code=1011, reason="Realtime service unavailable")
+        return
+
+    if not _realtime_client_allowed(websocket):
+        logger.warning("Rejected realtime websocket from non-private client")
+        await websocket.close(code=1008, reason="Realtime access limited to local/private clients")
+        return
+
+    try:
+        active_topics = await realtime_hub.connect(websocket)
+    except RuntimeError:
+        logger.warning("Rejected realtime websocket: too many active connections")
+        await websocket.close(code=1013, reason="Too many realtime clients")
+        return
+
+    await websocket.send_json(
+        {
+            "type": "connected",
+            "topics": sorted(active_topics),
+            "timestamp": datetime.now(UTC).isoformat(),
+        }
+    )
+
+    try:
+        while True:
+            raw_message = await websocket.receive_text()
+            if len(raw_message.encode("utf-8")) > MAX_WEBSOCKET_MESSAGE_BYTES:
+                await websocket.send_json({"type": "error", "message": "Realtime payload too large"})
+                continue
+
+            try:
+                message = json.loads(raw_message)
+            except json.JSONDecodeError:
+                await websocket.send_json({"type": "error", "message": "Invalid realtime payload"})
+                continue
+
+            message_type = str(message.get("type") or "").strip().lower()
+
+            if message_type == "ping":
+                await websocket.send_json({"type": "pong", "timestamp": datetime.now(UTC).isoformat()})
+                continue
+
+            if message_type == "subscribe":
+                topics = message.get("topics") or []
+                if not isinstance(topics, list) or len(topics) > MAX_WEBSOCKET_TOPICS:
+                    await websocket.send_json({"type": "error", "message": "Invalid realtime topics"})
+                    continue
+                normalized_topics = {
+                    str(topic).strip().lower()
+                    for topic in topics
+                    if str(topic).strip()
+                }
+                if normalized_topics and not normalized_topics.issubset(ALLOWED_REALTIME_TOPICS):
+                    await websocket.send_json({"type": "error", "message": "Unsupported realtime topics"})
+                    continue
+                active_topics = await realtime_hub.update_topics(websocket, topics)
+                await websocket.send_json({"type": "subscribed", "topics": sorted(active_topics)})
+                continue
+
+            await websocket.send_json({"type": "error", "message": "Unsupported realtime message"})
+    except asyncio.CancelledError:
+        raise
+    except WebSocketDisconnect:
+        await realtime_hub.disconnect(websocket)
+    except Exception:
+        logger.exception("Unexpected realtime websocket error")
+        await realtime_hub.disconnect(websocket)
 
 
 @router.get("/system/geoip-status")
@@ -203,7 +313,7 @@ async def replace_alerts(payload: list[AlertPayload], session: AsyncSession = De
 
 
 def _window(minutes: int) -> datetime:
-    return datetime.utcnow() - timedelta(minutes=minutes)
+    return datetime.now(UTC) - timedelta(minutes=minutes)
 
 
 TIMELINE_ALLOWED_TRACKS = {
@@ -233,7 +343,7 @@ def _normalize_time_scope(
 ) -> tuple[datetime, datetime]:
     if start_time and end_time:
         return min(start_time, end_time), max(start_time, end_time)
-    end = datetime.utcnow()
+    end = datetime.now(UTC)
     return end - timedelta(minutes=minutes), end
 
 
@@ -275,7 +385,7 @@ def _bucket_label(bucket_seconds: int) -> str:
 def _bucket_floor(value: datetime, bucket_seconds: int) -> datetime:
     ts = int(value.timestamp())
     floored = ts - (ts % bucket_seconds)
-    return datetime.utcfromtimestamp(floored)
+    return datetime.fromtimestamp(floored, UTC)
 
 
 def _timeline_row_filters(row: TimelineRowPayload):
@@ -471,6 +581,7 @@ async def timeline_overview(
     bucket_seconds = _bucket_seconds_for_span(span_seconds)
     points = await _aggregate_timeline_points(session, rows, start, end, bucket_seconds)
     initial_visible_start = start
+    timeline_buffer_cap = settings.max_timeline_events if settings.max_timeline_events > 0 else DEFAULT_TIMELINE_BUFFER_CAP
     return {
         "rows": [row.model_dump() for row in rows],
         "points": points,
@@ -482,7 +593,7 @@ async def timeline_overview(
         "bucket_label": _bucket_label(bucket_seconds),
         "initial_visible_start": initial_visible_start.isoformat(),
         "initial_visible_end": end.isoformat(),
-        "buffer_cap": settings.max_timeline_events,
+        "buffer_cap": timeline_buffer_cap,
     }
 
 
@@ -497,6 +608,7 @@ async def timeline_detail(
     total_events = await session.scalar(select(func.count(FirewallLog.id)).where(*base_filters))
     span_seconds = max(1.0, (end - start).total_seconds())
     detail_event_limit = settings.max_timeline_events if settings.max_timeline_events > 0 else None
+    reported_buffer_cap = detail_event_limit if detail_event_limit is not None else DEFAULT_TIMELINE_BUFFER_CAP
 
     if (detail_event_limit is None or (total_events or 0) <= detail_event_limit) and span_seconds <= 6 * 3600:
         stmt = (
@@ -523,7 +635,7 @@ async def timeline_detail(
             "start_time": start.isoformat(),
             "end_time": end.isoformat(),
             "events_total": total_events or 0,
-            "buffer_cap": detail_event_limit,
+            "buffer_cap": reported_buffer_cap,
             "truncated": detail_event_limit is not None and (total_events or 0) > detail_event_limit,
             "events": [_serialize_timeline_event(row) for row in rows],
         }
@@ -539,14 +651,14 @@ async def timeline_detail(
         "bucket_label": _bucket_label(bucket_seconds),
         "points": points,
         "events": [],
-        "buffer_cap": detail_event_limit,
+        "buffer_cap": reported_buffer_cap,
         "truncated": False,
     }
 
 
 @router.get("/dashboard/timeline")
 async def timeline(
-    minutes: int = Query(default=settings.default_lookback_minutes, ge=1, le=10080),
+    minutes: int = Query(default=settings.default_lookback_minutes, ge=1, le=MAX_DASHBOARD_LOOKBACK_MINUTES),
     track_by: str = Query(default="traffic_flow"),
     start_time: datetime | None = Query(default=None),
     end_time: datetime | None = Query(default=None),
@@ -628,11 +740,14 @@ async def timeline(
 
 @router.get("/dashboard/top")
 async def top_stats(
-    minutes: int = Query(default=settings.default_lookback_minutes, ge=1, le=1440),
+    minutes: int = Query(default=settings.default_lookback_minutes, ge=1, le=MAX_DASHBOARD_LOOKBACK_MINUTES),
     field: str = Query(default="source_ip"),
+    start_time: datetime | None = Query(default=None),
+    end_time: datetime | None = Query(default=None),
     limit: int = Query(default=10, ge=1, le=50),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    start, end = _normalize_time_scope(minutes, start_time, end_time)
     allowed = {
         "source_ip": FirewallLog.source_ip,
         "destination_port": FirewallLog.destination_port,
@@ -647,7 +762,8 @@ async def top_stats(
                 FirewallLog.destination_port,
                 func.count(FirewallLog.id).label("count"),
             )
-            .where(FirewallLog.observed_at >= _window(minutes))
+            .where(FirewallLog.observed_at >= start)
+            .where(FirewallLog.observed_at <= end)
             .where(FirewallLog.destination_ip.is_not(None))
             .where(FirewallLog.destination_port.is_not(None))
             .group_by(FirewallLog.destination_ip, FirewallLog.destination_port)
@@ -667,7 +783,8 @@ async def top_stats(
     column = allowed[field]
     stmt = (
         select(column.label("value"), func.count(FirewallLog.id).label("count"))
-        .where(FirewallLog.observed_at >= _window(minutes))
+        .where(FirewallLog.observed_at >= start)
+        .where(FirewallLog.observed_at <= end)
         .where(column.is_not(None))
         .group_by(column)
         .order_by(desc("count"))
@@ -680,10 +797,19 @@ async def top_stats(
 @router.get("/dashboard/ip-detail")
 async def ip_detail(
     ip: str = Query(..., min_length=1),
-    minutes: int = Query(default=1440, ge=1, le=10080),
+    minutes: int = Query(default=1440, ge=1, le=MAX_DASHBOARD_LOOKBACK_MINUTES),
+    start_time: datetime | None = Query(default=None),
+    end_time: datetime | None = Query(default=None),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    total_seen = await session.scalar(select(func.count(FirewallLog.id)).where(FirewallLog.source_ip == ip, FirewallLog.observed_at >= _window(minutes)))
+    start, end = _normalize_time_scope(minutes, start_time, end_time)
+    total_seen = await session.scalar(
+        select(func.count(FirewallLog.id)).where(
+            FirewallLog.source_ip == ip,
+            FirewallLog.observed_at >= start,
+            FirewallLog.observed_at <= end,
+        )
+    )
     geo_stmt = (
         select(
             FirewallLog.source_country,
@@ -693,7 +819,7 @@ async def ip_detail(
             func.min(FirewallLog.observed_at),
             func.max(FirewallLog.observed_at),
         )
-        .where(FirewallLog.source_ip == ip, FirewallLog.observed_at >= _window(minutes))
+        .where(FirewallLog.source_ip == ip, FirewallLog.observed_at >= start, FirewallLog.observed_at <= end)
         .group_by(FirewallLog.source_country, FirewallLog.source_city, FirewallLog.source_lat, FirewallLog.source_lon)
         .order_by(desc(func.max(FirewallLog.observed_at)))
         .limit(1)
@@ -702,7 +828,7 @@ async def ip_detail(
     top_destinations = (
         await session.execute(
             select(FirewallLog.destination_ip, func.count(FirewallLog.id).label("count"))
-            .where(FirewallLog.source_ip == ip, FirewallLog.observed_at >= _window(minutes))
+            .where(FirewallLog.source_ip == ip, FirewallLog.observed_at >= start, FirewallLog.observed_at <= end)
             .group_by(FirewallLog.destination_ip)
             .order_by(desc("count"))
             .limit(5)
@@ -711,7 +837,7 @@ async def ip_detail(
     top_ports = (
         await session.execute(
             select(FirewallLog.destination_port, func.count(FirewallLog.id).label("count"))
-            .where(FirewallLog.source_ip == ip, FirewallLog.observed_at >= _window(minutes))
+            .where(FirewallLog.source_ip == ip, FirewallLog.observed_at >= start, FirewallLog.observed_at <= end)
             .group_by(FirewallLog.destination_port)
             .order_by(desc("count"))
             .limit(5)
@@ -720,7 +846,7 @@ async def ip_detail(
     flows = (
         await session.execute(
             select(FirewallLog.traffic_flow, func.count(FirewallLog.id).label("count"))
-            .where(FirewallLog.source_ip == ip, FirewallLog.observed_at >= _window(minutes))
+            .where(FirewallLog.source_ip == ip, FirewallLog.observed_at >= start, FirewallLog.observed_at <= end)
             .group_by(FirewallLog.traffic_flow)
             .order_by(desc("count"))
             .limit(5)
@@ -729,7 +855,7 @@ async def ip_detail(
     actions = (
         await session.execute(
             select(FirewallLog.action, func.count(FirewallLog.id).label("count"))
-            .where(FirewallLog.source_ip == ip, FirewallLog.observed_at >= _window(minutes))
+            .where(FirewallLog.source_ip == ip, FirewallLog.observed_at >= start, FirewallLog.observed_at <= end)
             .group_by(FirewallLog.action)
             .order_by(desc("count"))
             .limit(5)
@@ -753,7 +879,7 @@ async def ip_detail(
 
 @router.get("/dashboard/logs")
 async def log_rows(
-    minutes: int = Query(default=1440, ge=1, le=10080),
+    minutes: int = Query(default=1440, ge=1, le=MAX_DASHBOARD_LOOKBACK_MINUTES),
     start_time: datetime | None = Query(default=None),
     end_time: datetime | None = Query(default=None),
     limit: int = Query(default=250, ge=1, le=2000),
@@ -908,7 +1034,7 @@ async def ollama_models() -> dict:
 
 @router.get("/dashboard/map")
 async def map_data(
-    minutes: int = Query(default=settings.default_lookback_minutes, ge=1, le=10080),
+    minutes: int = Query(default=settings.default_lookback_minutes, ge=1, le=MAX_DASHBOARD_LOOKBACK_MINUTES),
     start_time: datetime | None = Query(default=None),
     end_time: datetime | None = Query(default=None),
     north: float | None = Query(default=None),
@@ -983,7 +1109,7 @@ async def map_data(
 
 @router.get("/dashboard/graph")
 async def graph_data(
-    minutes: int = Query(default=settings.default_lookback_minutes, ge=1, le=10080),
+    minutes: int = Query(default=settings.default_lookback_minutes, ge=1, le=MAX_DASHBOARD_LOOKBACK_MINUTES),
     start_time: datetime | None = Query(default=None),
     end_time: datetime | None = Query(default=None),
     limit: int = Query(default=120, ge=20, le=1000),
@@ -1014,15 +1140,16 @@ async def graph_data(
         .limit(limit)
     )
     rows = (await session.execute(stmt)).all()
-    nodes = {}
+    nodes: dict[str, dict] = {}
     edge_weights: dict[tuple[str, str], int] = {}
     for row in rows:
-        source = row.source_ip
+        source_ip = row.source_ip
+        destination_ip = row.destination_ip
         source_socket = f"{row.source_ip}:{row.source_port}"
-        destination = row.destination_ip
         destination_socket = f"{row.destination_ip}:{row.destination_port}"
-        nodes[source] = {"id": source, "name": source, "category": "source"}
-        nodes[destination] = {"id": destination, "name": destination, "category": "destination"}
+
+        nodes[source_ip] = {"id": source_ip, "name": source_ip, "category": "source"}
+        nodes[destination_ip] = {"id": destination_ip, "name": destination_ip, "category": "destination"}
         nodes[source_socket] = {
             "id": source_socket,
             "name": source_socket,
@@ -1035,20 +1162,30 @@ async def graph_data(
             "category": "service",
             "kind": "destination_socket",
         }
-        for edge in (
-            (source, source_socket),
+
+        for source, target in (
+            (source_ip, source_socket),
             (source_socket, destination_socket),
-            (destination_socket, destination),
+            (destination_socket, destination_ip),
         ):
-            edge_weights[edge] = edge_weights.get(edge, 0) + row.count
+            edge_weights[(source, target)] = edge_weights.get((source, target), 0) + row.count
+
     edges = [
-        {"source": source, "target": target, "value": value}
-        for (source, target), value in edge_weights.items()
+        {
+            "source": source,
+            "target": target,
+            "value": value,
+            "label": f"{source} -> {target}",
+        }
+        for (source, target), value in sorted(
+            edge_weights.items(), key=lambda item: (-item[1], item[0][0], item[0][1])
+        )
     ]
     return {
         "requested_start": start.isoformat(),
         "requested_end": end.isoformat(),
         "truncated": len(rows) >= limit,
+        "directed": True,
         "nodes": list(nodes.values()),
         "edges": edges,
     }

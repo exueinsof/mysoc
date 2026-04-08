@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="it" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>mysoc React dashboard</title>
+    <meta
+      name="description"
+      content="mysoc React dashboard completo, riallineato da mysocold con layout dark, realtime e componenti React." 
+    />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script>
+      tailwind = window.tailwind || {};
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            colors: {
+              night: '#070b11',
+              panel: '#101722',
+              line: '#223042',
+              cyan: '#22d3ee',
+              emerald: '#34d399',
+              crimson: '#ef4444',
+            },
+          },
+        },
+      };
+    </script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="/static/css/app.css" />
+  </head>
+  <body class="bg-night text-slate-200">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

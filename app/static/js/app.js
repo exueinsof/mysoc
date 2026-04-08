@@ -126,6 +126,15 @@ function mysocApp() {
     timelineLayout: null,
     timelineStartPicker: null,
     timelineEndPicker: null,
+    realtimeConnected: false,
+    realtimeSocket: null,
+    realtimeReconnectTimer: null,
+    realtimeReconnectAttempt: 0,
+    realtimePendingLogs: [],
+    realtimeBatchDebounce: null,
+    realtimeLastEventAt: null,
+    realtimeStatus: "connecting",
+    realtimeAlertRefreshTimer: null,
 
     async init() {
       this.loadSavedPrompts();
@@ -135,11 +144,12 @@ function mysocApp() {
       this.$watch("logFilters", () => this.scheduleLogRefresh(), { deep: true });
       this.$watch("activeTab", () => this.scheduleVisualRefresh());
       window.addEventListener("resize", () => this.scheduleVisualRefresh());
+      window.addEventListener("beforeunload", () => this.teardownRealtime());
+      this.setupRealtime();
       setInterval(() => {
-        if (this.activeTab === "timeline" || this.activeTab === "map") {
-          return;
+        if (this.realtimeConnected) {
+          this.sendRealtimeMessage({ type: "ping" });
         }
-        this.refreshAll();
       }, 15000);
     },
 
@@ -276,6 +286,373 @@ function mysocApp() {
         throw new Error(`${response.status} ${response.statusText}`);
       }
       return response.json();
+    },
+
+    realtimeUrl() {
+      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      return `${protocol}//${window.location.host}/api/ws/live`;
+    },
+
+    teardownRealtime() {
+      if (this.realtimeReconnectTimer) {
+        clearTimeout(this.realtimeReconnectTimer);
+        this.realtimeReconnectTimer = null;
+      }
+      if (this.realtimeSocket) {
+        this.realtimeSocket.close();
+        this.realtimeSocket = null;
+      }
+      this.realtimeConnected = false;
+    },
+
+    sendRealtimeMessage(payload) {
+      if (!this.realtimeSocket || this.realtimeSocket.readyState !== WebSocket.OPEN) {
+        return;
+      }
+      this.realtimeSocket.send(JSON.stringify(payload));
+    },
+
+    setupRealtime() {
+      if (this.realtimeSocket && (this.realtimeSocket.readyState === WebSocket.OPEN || this.realtimeSocket.readyState === WebSocket.CONNECTING)) {
+        return;
+      }
+      if (this.realtimeReconnectTimer) {
+        clearTimeout(this.realtimeReconnectTimer);
+        this.realtimeReconnectTimer = null;
+      }
+      this.realtimeStatus = "connecting";
+      const socket = new WebSocket(this.realtimeUrl());
+      this.realtimeSocket = socket;
+
+      socket.addEventListener("open", () => {
+        if (this.realtimeSocket !== socket) {
+          return;
+        }
+        this.realtimeConnected = true;
+        this.realtimeStatus = "live";
+        this.realtimeReconnectAttempt = 0;
+        this.statusMessage = "Canale realtime WebSocket attivo";
+        this.sendRealtimeMessage({
+          type: "subscribe",
+          topics: ["dashboard", "logs", "timeline", "map", "graph", "alerts"],
+        });
+      });
+
+      socket.addEventListener("message", (event) => {
+        try {
+          const message = JSON.parse(event.data);
+          this.handleRealtimeMessage(message);
+        } catch (error) {
+          console.error("Realtime payload non valido", error);
+        }
+      });
+
+      socket.addEventListener("close", () => {
+        if (this.realtimeSocket !== socket) {
+          return;
+        }
+        this.realtimeConnected = false;
+        this.realtimeStatus = "reconnecting";
+        this.statusMessage = "Realtime disconnesso: fallback refresh attivo";
+        const delayMs = Math.min(15000, 1000 * (2 ** this.realtimeReconnectAttempt));
+        this.realtimeReconnectAttempt += 1;
+        this.realtimeReconnectTimer = setTimeout(() => this.setupRealtime(), delayMs);
+      });
+
+      socket.addEventListener("error", () => {
+        if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+          socket.close();
+        }
+      });
+    },
+
+    handleRealtimeMessage(message) {
+      const messageType = String(message?.type || "").toLowerCase();
+      if (messageType === "connected") {
+        this.realtimeConnected = true;
+        this.realtimeStatus = "live";
+        this.statusFooter = `live websocket • ${new Date().toLocaleTimeString("it-IT")}`;
+        return;
+      }
+      if (messageType === "subscribed") {
+        this.statusFooter = `topics live: ${(message.topics || []).join(", ") || "dashboard"}`;
+        return;
+      }
+      if (messageType === "pong") {
+        this.realtimeLastEventAt = message.timestamp || new Date().toISOString();
+        return;
+      }
+      if (messageType === "ingestion_batch") {
+        this.handleRealtimeIngestionBatch(message);
+        return;
+      }
+      if (messageType === "error") {
+        this.statusMessage = message.message || "Errore realtime";
+      }
+    },
+
+    handleRealtimeIngestionBatch(message) {
+      const latestLogs = Array.isArray(message.latest_logs) ? message.latest_logs : [];
+      const count = Number(message.count || latestLogs.length || 0);
+      this.realtimeLastEventAt = message.timestamp || new Date().toISOString();
+      this.statusFooter = `live • ${count} nuovi eventi • ${new Date().toLocaleTimeString("it-IT")}`;
+      if (!latestLogs.length) {
+        return;
+      }
+      this.realtimePendingLogs = [...this.realtimePendingLogs, ...latestLogs].slice(-250);
+      clearTimeout(this.realtimeBatchDebounce);
+      this.realtimeBatchDebounce = setTimeout(() => this.flushRealtimeLogs(), 180);
+    },
+
+    flushRealtimeLogs() {
+      const batch = [...this.realtimePendingLogs];
+      this.realtimePendingLogs = [];
+      if (!batch.length) {
+        return;
+      }
+
+      this.prependRealtimeLogs(batch);
+
+      if (this.isRealtimeWindowActive()) {
+        this.mergeRealtimeGraphData(batch);
+        this.mergeRealtimeMapPoints(batch);
+
+        if (this.timelineRows.length) {
+          if (this.timelineDetailMode === "events") {
+            this.mergeRealtimeTimeline(batch);
+          } else if (this.activeTab === "timeline" && this.timelineVisibleRange.start && this.timelineVisibleRange.end) {
+            this.loadTimelineDetailWindow(this.timelineVisibleRange.start, this.timelineVisibleRange.end);
+          }
+        }
+      }
+
+      if (this.activeTab === "map") {
+        this.renderMap(this.mapPoints);
+        this.scheduleGraphRender();
+      }
+      if (this.activeTab === "timeline" && this.timelineDetailMode === "events") {
+        this.renderTimeline();
+      }
+      if (this.activeTab === "alerts" || this.alertsDataLoaded) {
+        clearTimeout(this.realtimeAlertRefreshTimer);
+        this.realtimeAlertRefreshTimer = setTimeout(() => this.refreshAlertsData(), 600);
+      }
+    },
+
+    currentDashboardWindow() {
+      if (this.timelineSelection?.startMs && this.timelineSelection?.endMs) {
+        return { startMs: this.timelineSelection.startMs, endMs: this.timelineSelection.endMs };
+      }
+      this.normalizeTimelineFilters();
+      const startMs = this.timelineFilters.start ? new Date(this.timelineFilters.start).getTime() : (Date.now() - (60 * 60 * 1000));
+      const endMs = this.timelineFilters.end ? new Date(this.timelineFilters.end).getTime() : Date.now();
+      return { startMs, endMs };
+    },
+
+    isRealtimeWindowActive() {
+      const { endMs } = this.currentDashboardWindow();
+      return Number.isFinite(endMs) && endMs >= (Date.now() - (2 * 60 * 1000));
+    },
+
+    isLogInCurrentWindow(log) {
+      const observedAt = new Date(log?.observed_at || log?.time || 0).getTime();
+      if (!Number.isFinite(observedAt)) {
+        return false;
+      }
+      const { startMs, endMs } = this.currentDashboardWindow();
+      return observedAt >= startMs && observedAt <= endMs;
+    },
+
+    matchesLogFilters(row) {
+      const contains = (value, expected) => String(value || "").toLowerCase().includes(String(expected || "").trim().toLowerCase());
+      if (this.logFilters.time && !contains(row.observed_at, this.logFilters.time)) return false;
+      if (this.logFilters.flow && !contains(row.traffic_flow, this.logFilters.flow)) return false;
+      if (this.logFilters.action && !contains(row.action, this.logFilters.action)) return false;
+      if (this.logFilters.source && !contains(`${row.source_ip || ""}:${row.source_port ?? ""}`, this.logFilters.source)) return false;
+      if (this.logFilters.destination && !contains(`${row.destination_ip || ""}:${row.destination_port ?? ""}`, this.logFilters.destination)) return false;
+      if (this.logFilters.classes && !contains((row.classes || []).join(" "), this.logFilters.classes)) return false;
+      if (this.logFilters.protocol && !contains(row.protocol, this.logFilters.protocol)) return false;
+      if (this.logFilters.geo && !contains(`${row.source_country || ""} ${row.source_city || ""}`, this.logFilters.geo)) return false;
+      if (this.logFilters.summary && !contains(`${row.summary || ""} ${row.raw_message || ""}`, this.logFilters.summary)) return false;
+      return true;
+    },
+
+    prependRealtimeLogs(logs) {
+      const nextLogs = logs
+        .filter((log) => this.isLogInCurrentWindow(log))
+        .map((log) => ({ ...log, classes: Array.isArray(log.classes) ? log.classes : [] }))
+        .filter((log) => this.matchesLogFilters(log));
+      if (!nextLogs.length) {
+        return;
+      }
+
+      const existingIds = new Set((this.logs.items || []).map((item) => item.id));
+      const freshLogs = nextLogs.filter((log) => !existingIds.has(log.id));
+      if (!freshLogs.length) {
+        return;
+      }
+
+      const increment = freshLogs.length;
+      if ((this.logs.offset || 0) === 0) {
+        const mergedItems = [...freshLogs, ...(this.logs.items || [])]
+          .sort((left, right) => new Date(right.observed_at || 0).getTime() - new Date(left.observed_at || 0).getTime())
+          .slice(0, this.logs.limit || 50);
+        this.logs = {
+          ...this.logs,
+          items: mergedItems,
+          total: (this.logs.total || 0) + increment,
+        };
+        this.logsPageInput = this.logCurrentPage();
+        return;
+      }
+
+      this.logs = {
+        ...this.logs,
+        total: (this.logs.total || 0) + increment,
+      };
+    },
+
+    toTimelineEvent(log) {
+      return {
+        id: log.id,
+        time: log.observed_at,
+        track: log.traffic_flow || "unknown",
+        summary: log.summary,
+        action: log.action,
+        source_ip: log.source_ip,
+        destination_ip: log.destination_ip,
+        destination_port: log.destination_port,
+        traffic_flow: log.traffic_flow,
+        raw_message: log.raw_message,
+      };
+    },
+
+    mergeRealtimeTimeline(logs) {
+      const nextEvents = logs
+        .filter((log) => this.isLogInCurrentWindow(log))
+        .map((log) => this.toTimelineEvent(log));
+      if (!nextEvents.length) {
+        return;
+      }
+
+      const existingIds = new Set(this.timelineEvents.map((event) => event.id));
+      const mergedEvents = [...nextEvents.filter((event) => !existingIds.has(event.id)), ...this.timelineEvents]
+        .sort((left, right) => new Date(right.time || 0).getTime() - new Date(left.time || 0).getTime())
+        .slice(0, this.timelineBufferCap);
+
+      this.timelineEvents = mergedEvents;
+      this.timelineOrderedTimes = [
+        ...new Set(
+          this.timelineEvents
+            .map((event) => new Date(event.time).getTime())
+            .filter((value) => Number.isFinite(value))
+        ),
+      ].sort((a, b) => a - b);
+      if (this.timelineEvents.length) {
+        this.selectedEvent = this.timelineEvents[0];
+      }
+    },
+
+    mergeRealtimeMapPoints(logs) {
+      const pointsByKey = new Map(
+        (this.mapPoints || []).map((point) => [
+          `${point.source_ip}|${point.source_port}|${point.destination_ip}|${point.destination_port}|${point.lat}|${point.lon}`,
+          { ...point },
+        ])
+      );
+
+      logs
+        .filter((log) => this.isLogInCurrentWindow(log))
+        .filter((log) => log.traffic_flow === "external_to_internal")
+        .filter((log) => log.source_lat !== null && log.source_lat !== undefined && log.source_lon !== null && log.source_lon !== undefined)
+        .filter((log) => Number.isFinite(Number(log.source_lat)) && Number.isFinite(Number(log.source_lon)))
+        .forEach((log) => {
+          const key = `${log.source_ip}|${log.source_port}|${log.destination_ip}|${log.destination_port}|${log.source_lat}|${log.source_lon}`;
+          const current = pointsByKey.get(key);
+          if (current) {
+            current.count = (current.count || 0) + 1;
+            return;
+          }
+          pointsByKey.set(key, {
+            source_ip: log.source_ip,
+            source_port: log.source_port,
+            destination_ip: log.destination_ip,
+            destination_port: log.destination_port,
+            country: log.source_country,
+            city: log.source_city,
+            lat: Number(log.source_lat),
+            lon: Number(log.source_lon),
+            count: 1,
+          });
+        });
+
+      this.mapPoints = Array.from(pointsByKey.values())
+        .sort((left, right) => (right.count || 0) - (left.count || 0))
+        .slice(0, 150);
+    },
+
+    mergeRealtimeGraphData(logs) {
+      const baseGraph = this.graphDataCache || { nodes: [], edges: [] };
+      const baseNodeCount = (baseGraph.nodes || []).length;
+      const baseEdgeCount = (baseGraph.edges || []).length;
+      const nodesById = new Map((baseGraph.nodes || []).map((node) => [node.id, { ...node }]));
+      const edgesById = new Map((baseGraph.edges || []).map((edge) => [`${edge.source}>>${edge.target}`, { ...edge }]));
+      let graphChanged = false;
+
+      const ensureNode = (node) => {
+        if (!nodesById.has(node.id)) {
+          nodesById.set(node.id, node);
+          graphChanged = true;
+        }
+      };
+      const addEdge = (source, target, increment = 1) => {
+        const key = `${source}>>${target}`;
+        const current = edgesById.get(key);
+        if (current) {
+          current.value = (current.value || 0) + increment;
+          current.label = current.label || `${source} -> ${target}`;
+          graphChanged = true;
+          return;
+        }
+        edgesById.set(key, { source, target, value: increment, label: `${source} -> ${target}` });
+        graphChanged = true;
+      };
+
+      logs
+        .filter((log) => this.isLogInCurrentWindow(log))
+        .filter((log) => log.source_ip && log.destination_ip)
+        .filter((log) => log.source_port !== null && log.source_port !== undefined && log.destination_port !== null && log.destination_port !== undefined)
+        .filter((log) => Number.isFinite(Number(log.source_port)) && Number.isFinite(Number(log.destination_port)))
+        .forEach((log) => {
+          const sourceIp = `${log.source_ip}`;
+          const destinationIp = `${log.destination_ip}`;
+          const sourceSocket = `${log.source_ip}:${log.source_port}`;
+          const destinationSocket = `${log.destination_ip}:${log.destination_port}`;
+
+          ensureNode({ id: sourceIp, name: sourceIp, category: "source" });
+          ensureNode({ id: destinationIp, name: destinationIp, category: "destination" });
+          ensureNode({ id: sourceSocket, name: sourceSocket, category: "service", kind: "source_socket" });
+          ensureNode({ id: destinationSocket, name: destinationSocket, category: "service", kind: "destination_socket" });
+
+          addEdge(sourceIp, sourceSocket);
+          addEdge(sourceSocket, destinationSocket);
+          addEdge(destinationSocket, destinationIp);
+        });
+
+      const edges = Array.from(edgesById.values())
+        .sort((left, right) => (right.value || 0) - (left.value || 0))
+        .slice(0, 360);
+      const retainedNodeIds = new Set(edges.flatMap((edge) => [edge.source, edge.target]));
+      const nodes = Array.from(nodesById.values()).filter((node) => retainedNodeIds.has(node.id));
+
+      this.graphDataCache = {
+        ...baseGraph,
+        nodes,
+        edges,
+      };
+      if (graphChanged || nodes.length !== baseNodeCount || edges.length !== baseEdgeCount) {
+        this.graphRenderedSignature = "";
+      }
     },
 
     setDefaultTimelineWindow() {

@@ -1,5 +1,5 @@
 /* Keep the browser viewport as the single layout envelope. */
-[html, body] { height: 100%; }
+html, body { height: 100%; }
 
 html,
 body {
@@ -597,6 +597,7 @@ body {
   justify-content: center;
   padding: 1.5rem;
   background: rgba(3, 7, 18, 0.72);
+  -webkit-backdrop-filter: blur(10px);
   backdrop-filter: blur(10px);
 }
 
@@ -760,7 +761,7 @@ body {
   .app-main,
   .app-section {
     display: block;
-    min-height: auto;
+    min-height: 0;
     height: auto;
     overflow: visible;
   }
@@ -768,7 +769,7 @@ body {
   .panel-scroll {
     max-height: none;
     overflow: visible;
-    min-height: auto;
+    min-height: 0;
   }
 
   .chart-frame {
@@ -794,7 +795,7 @@ body {
 
   .ai-panel,
   .ai-output {
-    min-height: auto;
+    min-height: 0;
   }
 }
 

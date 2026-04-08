@@ -420,6 +420,8 @@
                 <button
                   type="button"
                   class="btn-secondary !px-3 !py-2"
+                  title="Apri o chiudi il grafo a tutto schermo"
+                  aria-label="Apri o chiudi il grafo a tutto schermo"
                   :title="graphFullscreen ? 'Torna a widget' : 'Apri a tutto schermo'"
                   @click="toggleGraphFullscreen()"
                   x-text="graphFullscreen ? 'Riduci' : 'Fullscreen'"
@@ -526,7 +528,7 @@
                     <button type="button" class="log-pager-btn" title="Indietro di una pagina" :disabled="(logs.offset || 0) === 0" @click="previousLogPage()">‹</button>
                     <div class="log-pager-index">
                       <span>Pag.</span>
-                      <input class="input-dark log-pager-input" type="number" min="1" :max="logTotalPages()" x-model.number="logsPageInput" @change="goToLogPageInput()" />
+                      <input class="input-dark log-pager-input" type="number" min="1" :max="logTotalPages()" x-model.number="logsPageInput" @change="goToLogPageInput()" title="Numero pagina log" placeholder="1" aria-label="Numero pagina log" />
                     </div>
                     <button type="button" class="log-pager-btn" title="Avanti di una pagina" :disabled="!logs.has_more" @click="nextLogPage()">›</button>
                     <button type="button" class="log-pager-btn" title="Avanti di 5 pagine" :disabled="!logs.has_more" @click="jumpForwardLogs()">≫</button>
